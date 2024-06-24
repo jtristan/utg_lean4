@@ -204,38 +204,101 @@ def printUnicodeData (ucd : List UnicodeData) : IO Unit := do
   for entry in ucd do
     println <| reprStr entry
 
-def gapEncoding (ucd : List UnicodeData) (property : UnicodeData → Bool) : StateM (Bool × Nat × Nat × List Nat) (List Nat) := do
+def explicitRanges (ucd : List UnicodeData) (property : UnicodeData → Bool) : StateM ((Option Range) × List Range) (List Range) := do
   for datapoint in ucd do
-    let (inside, offset, last, ranges) ← get
+    let (rangeOpt, ranges) ← get
+    let code := datapoint.codepoint
+    let prop := property datapoint
+    match rangeOpt, prop with
+    | some r, true =>
+      if r.stop + 1 = code then
+        -- Extend the range
+        set (some ({r with stop := code})  , ranges)
+      else
+        -- Hidden gap
+        let completedRange : Range := { start := r.start , stop := r.stop + 1 }
+        let newRange : Range := { start := code , stop := code }
+        set (some newRange , completedRange :: ranges)
+    | some r, false =>
+      -- Close the range
+      -- Cannot use code for range end as their may be a jump in codepoints
+      let completedRange : Range := { start := r.start , stop := r.stop + 1 }
+      set ((none : Option Range) , completedRange :: ranges)
+    | none, true =>
+      -- Open a range
+      let newRange : Range := { start := code , stop := code }
+      set (some newRange , ranges)
+    | none, false =>
+      -- Nothing interesting, moving on
+      set (rangeOpt , ranges)
+
+  return (← get).2
+
+def mergeRanges (ranges : List Range) : StateM (Nat × List Nat) (List Nat) := do
+  let flat := ranges.foldl (fun acc => fun range => range.start :: range.stop :: acc) []
+  for bound in flat do
+    let (prev, gaps) ← get
+    set (bound, (bound - prev) :: gaps)
+  let (_,gaps) ← get
+  let gaps := (0 :: gaps).reverse
+  return gaps
+  -- let offsets := gaps.map (fun gap => if gap ≥ 256 then 0 else gap)
+  -- let offsetIndices := gaps.foldl (fun acc => fun gap => if gap ≥ 256 then gap :: acc else acc) []
+  -- return (offsets, offsetIndices)
+
+def offsets (gaps : List Nat) : List Nat :=
+  gaps.map (fun gap => if gap ≥ 256 then 0 else gap)
+
+def indices (gaps : List Nat) : StateM (Nat × List Nat) (List Nat) := do
+  for gap in gaps do
+    let (index, indices) ← get
+    if gap ≥ 256 then
+      set (index + 1 , ((index + 1) * 2^21) :: indices)
+    else
+      set (index + 1, indices)
+  return (← get).2.reverse
+
+def prefixSums (gaps : List Nat) : StateM (Nat × List Nat) (List Nat) := do
+  for gap in gaps do
+    let (prefixSum, prefixSums) ← get
+    if gap ≥ 256 then
+      set (prefixSum + gap , (prefixSum + gap) :: prefixSums)
+    else
+      set (prefixSum + gap, prefixSums)
+  return (← get).2.reverse
+
+def largeOffsetEncoding (indices prefixSums : List Nat) :=
+  let prefixSums := prefixSums ++ [0] -- Not right, testing
+  (indices.zip prefixSums).map (fun (idx,pf) => idx + pf)
+
+def gapEncoding (ucd : List UnicodeData) (property : UnicodeData → Bool) : StateM (Bool × Nat × Nat × Nat × List Nat) (List Nat) := do
+  for datapoint in ucd do
+    let (inside, offset, last, index, ranges) ← get
     let prop := property datapoint
     let code := datapoint.codepoint
     if xor inside prop then
       let delta := if inside then 1 + last - offset else code - offset
       let newOffset := if inside then 1 + last else code
-      dbg_trace "{reprStr datapoint}"
       if delta < 256 then
-        set (! inside, newOffset, code, delta :: ranges)
-        dbg_trace "{code} {delta}"
+        set (! inside, newOffset, code, index, delta :: ranges)
+        -- dbg_trace "{code} {delta}"
       else
-        set (! inside, newOffset, code, 0 :: ranges)
-        dbg_trace "{code} {0}"
+        let prefixSum := code
+        let info := index * 2 ^ 21 + prefixSum
+        set (! inside, newOffset, code, ranges.length + 1, 0 :: ranges)
+        dbg_trace "{info},"
     else if inside && code ≠ last + 1 then -- jump
+      -- Can throw exception is delta1 is greater than 255, because it must be inside
       let delta₁ := 1 + last - offset
       let delta₁ := if delta₁ < 256 then delta₁ else 0
       let delta₂ := code - (last + 1)
       let delta₂ := if delta₂ < 256 then delta₂ else 0
-      set (inside, code, code, delta₂ :: delta₁ :: ranges)
+      set (inside, code, code, index, delta₂ :: delta₁ :: ranges)
     else
-      set (inside, offset, code, ranges)
-  let (_, _, _, ranges) ← get
+      set (inside, offset, code, index, ranges)
+  let (_, _, _, _, ranges) ← get
+  let ranges := 0 :: ranges
   return ranges.reverse
-
-def filter (ucdc : UnicodeData) : Bool :=
-  match ucdc.gc with
-  | GeneralCategory.Number Number.Nd => true
-  | GeneralCategory.Number Number.Nl => true
-  | GeneralCategory.Number Number.No => true
-  | _ => false
 
 def main : IO Unit := do
   let workingDir : FilePath ← currentDir
@@ -258,6 +321,16 @@ def main : IO Unit := do
       let summary := summarizeUnicodeData ucd₅ |>.run {}
       printSummary summary.1
       -- state is returned and comes second
-      let (gaps,_,_) := gapEncoding ucd₅ filter |>.run (false, 0, 0, [])
+      let (gaps,_,_) := gapEncoding ucd₅ (fun ucdc => if let GeneralCategory.Number _ := ucdc.gc then true else false) |>.run (false, 0, 0, 0, [])
       println gaps
+      let (foo,_,_) := (explicitRanges ucd₅ (fun ucdc => if let GeneralCategory.Number _ := ucdc.gc then true else false)) |>.run (none,[])
+      let (bar,_) := (mergeRanges foo) |>.run (0,[])
+      println (offsets bar)
+      let (indices, _) := (indices bar) |>.run (0,[0])
+      println s!"Indices (length = {indices.length}): {indices}"
+      let (prefixSums, _) := (prefixSums bar) |>.run (0,[])
+      println s!"Prefix Sums (length = {prefixSums.length}): {prefixSums}"
+      let quux := largeOffsetEncoding indices prefixSums
+      print quux
+
   | Except.error msg => println msg
