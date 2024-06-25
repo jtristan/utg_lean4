@@ -246,8 +246,8 @@ def mergeRanges (ranges : List Range) : StateM (Nat × List Nat) (List Nat) := d
   -- let offsetIndices := gaps.foldl (fun acc => fun gap => if gap ≥ 256 then gap :: acc else acc) []
   -- return (offsets, offsetIndices)
 
-def offsets (gaps : List Nat) : List UInt8 :=
-  gaps.map (fun gap => if gap ≥ 256 then 0 else gap.toUInt8)
+def offsets (gaps : List Nat) : Array UInt8 :=
+  (gaps.map (fun gap => if gap ≥ 256 then 0 else gap.toUInt8)).toArray
 
 def indices (gaps : List Nat) : StateM (Nat × List Nat) (List Nat) := do
   for gap in gaps do
@@ -269,11 +269,11 @@ def prefixSums (gaps : List Nat) : StateM (Nat × List Nat) (List Nat) := do
 
 def largeOffsetEncoding (indices prefixSums : List Nat) :=
   let prefixSums := prefixSums ++ [1114111 + 1]
-  (indices.zip prefixSums).map (fun (idx,pf) => idx + pf)
+  ((indices.zip prefixSums).map (fun (idx,pf) => idx + pf)).toArray
 
 structure UcdPropertyTable where
-  runs : List Nat
-  offsets : List UInt8
+  runs : Array Nat
+  offsets : Array UInt8
   deriving Repr, DecidableEq, Inhabited, Nonempty
 
 instance : ToString UcdPropertyTable where
@@ -304,7 +304,7 @@ def searchRuns (table : UcdPropertyTable) (c : Char) : StateM Nat (Nat × Range)
   --dbg_trace s!"Idx: {idx} {codepoint} {table.runs.get! idx % 2^21}"
   let codepointStart := if idx = 0 then 0 else table.runs.get! (idx - 1) % 2^21
   let rangeStart := table.runs.get! idx / 2^21
-  let rangeStop := if idx + 1 = table.runs.length then table.offsets.length else table.runs.get! (idx + 1) / 2^21
+  let rangeStop := if idx + 1 = table.runs.size then table.offsets.size else table.runs.get! (idx + 1) / 2^21
   let range : Range := Range.mk rangeStart rangeStop 1
   return (codepointStart, range)
 
@@ -360,20 +360,34 @@ def main : IO Unit := do
       let table := calculateTable ucd₅ property
       let referenceTable := referenceTable ucd₅ property
       println table
-      for i in Range.mk 0 1200000 1 do
-        --println "oooooooo"
+      let bound := 1200000
+      -- for i in Range.mk 0 bound 1 do
+      --   let c := Char.ofNat i
+      --   let ref := referenceSearch referenceTable c
+      --   let candidate := search table c
+      --   if ref ≠ candidate then
+      --     println s!"{c.toNat} {c} {ref} {candidate}"
+      println s!"Size: {referenceTable.length * 4}"
+      let time ← monoNanosNow
+      for i in Range.mk 0 bound 1 do
         let c := Char.ofNat i
-        --println s!"{c}"
-        let ref := referenceSearch referenceTable c
-        let candidate := search table c
-        if ref ≠ candidate then
-          println s!"{c.toNat} {c} {ref} {candidate}"
-        --if i % 10000 = 0 then
-        --  println "."
-        --println "------"
+        let _ := referenceSearch referenceTable c
+      println <| (← monoNanosNow) - time
+      println s!"Size: {table.offsets.size + table.runs.size * 4}"
+      let time ← monoNanosNow
+      for i in Range.mk 0 bound 1 do
+        let c := Char.ofNat i
+        let _ := search table c
+      println <| (← monoNanosNow) - time
+      -- for i in Range.mk 0 100 1 do
+      --   let rb ← getRandomBytes 1
+      --   println rb
 
   | Except.error msg => println msg
 
 -- If my function is going to initialize the state, do I still need to run?
 -- Does the state needs to be returned?
 -- If I declared variables as let mul, could I infer the state?
+
+#check getRandomBytes
+#check monoMsNow
