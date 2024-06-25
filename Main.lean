@@ -331,13 +331,10 @@ def search (table : UcdPropertyTable) (c : Char) : Bool :=
   b
 
 def referenceTable (ucd : List UnicodeData) (property : UnicodeData → Bool): List Nat :=
-  let ucd := ucd.filter property
-  let ucd := ucd.map (fun ucdc => ucdc.codepoint)
-  ucd
+  (ucd.filter property).map (fun ucdc => ucdc.codepoint)
 
 def referenceSearch (table : List Nat) (c : Char) : Bool :=
-  let codepoint := c.toNat
-  table.contains codepoint
+  table.contains c.toNat
 
 def main : IO Unit := do
   let workingDir : FilePath ← currentDir
