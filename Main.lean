@@ -168,7 +168,7 @@ def loadUnicodeData (file : FilePath) : ExceptT String (StateT (List UnicodeData
       | some c => set <| { codepointRaw := codepoint , codepoint := c, gc := gc } :: data
   return (← get).reverse
 
-structure summaryUCD where
+structure SummaryUCD where
   letterCount : Int := 0
   markCount : Int := 0
   numberCount : Int := 0
@@ -178,7 +178,7 @@ structure summaryUCD where
   otherCount : Int := 0
   deriving Repr, DecidableEq, Inhabited, Nonempty
 
-def summarizeUnicodeData (ucd : List UnicodeData) : StateM summaryUCD summaryUCD := do
+def summarizeUnicodeData (ucd : List UnicodeData) : StateM SummaryUCD SummaryUCD := do
   for entry in ucd do
     let table ← get
     match entry.gc with
@@ -191,7 +191,7 @@ def summarizeUnicodeData (ucd : List UnicodeData) : StateM summaryUCD summaryUCD
     | GeneralCategory.Other _ => set { table with otherCount := table.otherCount + 1 }
   return ← get
 
-def printSummary (sucd : summaryUCD) : IO Unit := do
+def printSummary (sucd : SummaryUCD) : IO Unit := do
   println s!"Letter count: {sucd.letterCount}"
   println s!"Mark count: {sucd.markCount}"
   println s!"Number count: {sucd.numberCount}"
@@ -268,37 +268,73 @@ def prefixSums (gaps : List Nat) : StateM (Nat × List Nat) (List Nat) := do
   return (← get).2.reverse
 
 def largeOffsetEncoding (indices prefixSums : List Nat) :=
-  let prefixSums := prefixSums ++ [0] -- Not right, testing
+  let prefixSums := prefixSums ++ [1114111 + 1]
   (indices.zip prefixSums).map (fun (idx,pf) => idx + pf)
 
-def gapEncoding (ucd : List UnicodeData) (property : UnicodeData → Bool) : StateM (Bool × Nat × Nat × Nat × List Nat) (List Nat) := do
-  for datapoint in ucd do
-    let (inside, offset, last, index, ranges) ← get
-    let prop := property datapoint
-    let code := datapoint.codepoint
-    if xor inside prop then
-      let delta := if inside then 1 + last - offset else code - offset
-      let newOffset := if inside then 1 + last else code
-      if delta < 256 then
-        set (! inside, newOffset, code, index, delta :: ranges)
-        -- dbg_trace "{code} {delta}"
-      else
-        let prefixSum := code
-        let info := index * 2 ^ 21 + prefixSum
-        set (! inside, newOffset, code, ranges.length + 1, 0 :: ranges)
-        dbg_trace "{info},"
-    else if inside && code ≠ last + 1 then -- jump
-      -- Can throw exception is delta1 is greater than 255, because it must be inside
-      let delta₁ := 1 + last - offset
-      let delta₁ := if delta₁ < 256 then delta₁ else 0
-      let delta₂ := code - (last + 1)
-      let delta₂ := if delta₂ < 256 then delta₂ else 0
-      set (inside, code, code, index, delta₂ :: delta₁ :: ranges)
+structure UcdPropertyTable where
+  runs : List Nat
+  offsets : List Nat
+  deriving Repr, DecidableEq, Inhabited, Nonempty
+
+instance : ToString UcdPropertyTable where
+  toString := fun table => s!"runs:\n{table.runs}\noffsets:\n{table.offsets}"
+
+def calculateTable (ucd : List UnicodeData) (property : UnicodeData → Bool) : UcdPropertyTable :=
+  let (ranges,_,_) := (explicitRanges ucd property) |>.run (none,[])
+  let (gaps,_) := mergeRanges ranges |>.run (0,[])
+  let offsets := offsets gaps
+  let (indices, _) := indices gaps |>.run (0,[0])
+  let (prefixSums, _) := prefixSums gaps |>.run (0,[])
+  --dbg_trace s!"Indices: {indices}"
+  --dbg_trace s!"Prefix sum: {prefixSums}"
+  let runs := largeOffsetEncoding indices prefixSums
+  { runs, offsets }
+
+def searchRuns (table : UcdPropertyTable) (c : Char) : StateM Nat (Nat × Range) := do
+  let codepoint := c.toNat
+  -- dbg_trace s!"Codepoint: {codepoint}"
+  for run in table.runs do
+    let i ← get
+    let prefixSum := run % 2^21
+    --dbg_trace s!"Iteration: {i} {prefixSum}"
+    if codepoint < prefixSum then -- careful > or ≥
+      break
+    set <| i + 1
+  let idx ← get
+  --dbg_trace s!"Idx: {idx} {codepoint} {table.runs.get! idx % 2^21}"
+  let codepointStart := if idx = 0 then 0 else table.runs.get! (idx - 1) % 2^21
+  let rangeStart := table.runs.get! idx / 2^21
+  let rangeStop := if idx + 1 = table.runs.length then table.offsets.length else table.runs.get! (idx + 1) / 2^21
+  let range : Range := Range.mk rangeStart rangeStop 1
+  return (codepointStart, range)
+
+def searchOffsets (table : UcdPropertyTable) (c : Char) (range : Range) : StateM (Nat × Nat) Bool := do
+  let codepoint := c.toNat
+  for i in range do
+    let (_, prefixSum) ← get
+    if codepoint < prefixSum + table.offsets.get! i then
+      set <| (i,prefixSum)
+      break
     else
-      set (inside, offset, code, index, ranges)
-  let (_, _, _, _, ranges) ← get
-  let ranges := 0 :: ranges
-  return ranges.reverse
+      set <| (0,prefixSum + table.offsets.get! i)
+  let (i,_) ← get
+  return i % 2 = 1
+
+instance : ToString Range where
+  toString := fun range : Range => s!"[{range.start}..{range.stop})"
+
+def search (table : UcdPropertyTable) (c : Char) : Bool :=
+  let ((pfs,range),_) := searchRuns table c |>.run 0
+  --dbg_trace s!"{pfs} {range}"
+  let (b, _) := searchOffsets table c range |>.run (0,pfs)
+  --dbg_trace s!"Parity: {b}"
+  b
+
+def reference (ucd : List UnicodeData) (property : UnicodeData → Bool) (c : Char) : Bool :=
+  let ucd := ucd.filter property
+  let ucd := ucd.map (fun ucdc => ucdc.codepoint)
+  let codepoint := c.toNat
+  ucd.contains codepoint
 
 def main : IO Unit := do
   let workingDir : FilePath ← currentDir
@@ -320,17 +356,34 @@ def main : IO Unit := do
       println s! "UCD size: {ucd₅.length}"
       let summary := summarizeUnicodeData ucd₅ |>.run {}
       printSummary summary.1
-      -- state is returned and comes second
-      let (gaps,_,_) := gapEncoding ucd₅ (fun ucdc => if let GeneralCategory.Number _ := ucdc.gc then true else false) |>.run (false, 0, 0, 0, [])
-      println gaps
-      let (foo,_,_) := (explicitRanges ucd₅ (fun ucdc => if let GeneralCategory.Number _ := ucdc.gc then true else false)) |>.run (none,[])
-      let (bar,_) := (mergeRanges foo) |>.run (0,[])
-      println (offsets bar)
-      let (indices, _) := (indices bar) |>.run (0,[0])
-      println s!"Indices (length = {indices.length}): {indices}"
-      let (prefixSums, _) := (prefixSums bar) |>.run (0,[])
-      println s!"Prefix Sums (length = {prefixSums.length}): {prefixSums}"
-      let quux := largeOffsetEncoding indices prefixSums
-      print quux
+      let property := (fun ucdc : UnicodeData => if let GeneralCategory.Number _ := ucdc.gc then true else false)
+      let table := calculateTable ucd₅ property
+      println table
+      for i in Range.mk 0 1200000 1 do
+        --println "oooooooo"
+        let c := Char.ofNat i
+        --println s!"{c}"
+        let ref := reference ucd₅ property c
+        let candidate := search table c
+        if ref ≠ candidate then
+          println s!"{c.toNat} {c} {ref} {candidate}"
+        if i % 10000 = 0 then
+          println "."
+        --println "------"
 
   | Except.error msg => println msg
+
+#eval 0 % 2
+#eval 1 % 2
+#eval 2 % 2
+
+#eval 573766650
+#eval (273 * 2^21) + 1114112
+#eval (274 * 2^21) + 1114112
+
+#eval 573766650 - (273 * 2^21)
+#eval 18876774 % 2^21
+
+-- If my function is going to initialize the state, do I still need to run?
+-- Does the state needs to be returned?
+-- If I declared variables as let mul, could I infer the state?
