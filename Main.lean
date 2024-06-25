@@ -246,8 +246,8 @@ def mergeRanges (ranges : List Range) : StateM (Nat × List Nat) (List Nat) := d
   -- let offsetIndices := gaps.foldl (fun acc => fun gap => if gap ≥ 256 then gap :: acc else acc) []
   -- return (offsets, offsetIndices)
 
-def offsets (gaps : List Nat) : List Nat :=
-  gaps.map (fun gap => if gap ≥ 256 then 0 else gap)
+def offsets (gaps : List Nat) : List UInt8 :=
+  gaps.map (fun gap => if gap ≥ 256 then 0 else gap.toUInt8)
 
 def indices (gaps : List Nat) : StateM (Nat × List Nat) (List Nat) := do
   for gap in gaps do
@@ -273,7 +273,7 @@ def largeOffsetEncoding (indices prefixSums : List Nat) :=
 
 structure UcdPropertyTable where
   runs : List Nat
-  offsets : List Nat
+  offsets : List UInt8
   deriving Repr, DecidableEq, Inhabited, Nonempty
 
 instance : ToString UcdPropertyTable where
@@ -312,11 +312,11 @@ def searchOffsets (table : UcdPropertyTable) (c : Char) (range : Range) : StateM
   let codepoint := c.toNat
   for i in range do
     let (_, prefixSum) ← get
-    if codepoint < prefixSum + table.offsets.get! i then
+    if codepoint < prefixSum + (table.offsets.get! i).toNat then
       set <| (i,prefixSum)
       break
     else
-      set <| (0,prefixSum + table.offsets.get! i)
+      set <| (0,prefixSum + (table.offsets.get! i).toNat)
   let (i,_) ← get
   return i % 2 = 1
 
@@ -330,11 +330,14 @@ def search (table : UcdPropertyTable) (c : Char) : Bool :=
   --dbg_trace s!"Parity: {b}"
   b
 
-def reference (ucd : List UnicodeData) (property : UnicodeData → Bool) (c : Char) : Bool :=
+def referenceTable (ucd : List UnicodeData) (property : UnicodeData → Bool): List Nat :=
   let ucd := ucd.filter property
   let ucd := ucd.map (fun ucdc => ucdc.codepoint)
+  ucd
+
+def referenceSearch (table : List Nat) (c : Char) : Bool :=
   let codepoint := c.toNat
-  ucd.contains codepoint
+  table.contains codepoint
 
 def main : IO Unit := do
   let workingDir : FilePath ← currentDir
@@ -358,31 +361,21 @@ def main : IO Unit := do
       printSummary summary.1
       let property := (fun ucdc : UnicodeData => if let GeneralCategory.Number _ := ucdc.gc then true else false)
       let table := calculateTable ucd₅ property
+      let referenceTable := referenceTable ucd₅ property
       println table
       for i in Range.mk 0 1200000 1 do
         --println "oooooooo"
         let c := Char.ofNat i
         --println s!"{c}"
-        let ref := reference ucd₅ property c
+        let ref := referenceSearch referenceTable c
         let candidate := search table c
         if ref ≠ candidate then
           println s!"{c.toNat} {c} {ref} {candidate}"
-        if i % 10000 = 0 then
-          println "."
+        --if i % 10000 = 0 then
+        --  println "."
         --println "------"
 
   | Except.error msg => println msg
-
-#eval 0 % 2
-#eval 1 % 2
-#eval 2 % 2
-
-#eval 573766650
-#eval (273 * 2^21) + 1114112
-#eval (274 * 2^21) + 1114112
-
-#eval 573766650 - (273 * 2^21)
-#eval 18876774 % 2^21
 
 -- If my function is going to initialize the state, do I still need to run?
 -- Does the state needs to be returned?
