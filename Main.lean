@@ -259,14 +259,16 @@ def indices (gaps : List Nat) : List Nat := Id.run do
       index := index + 1
   return indices.reverse
 
-def prefixSums (gaps : List Nat) : StateM (Nat × List Nat) (List Nat) := do
+def prefixSums (gaps : List Nat) : List Nat := Id.run do
+  let mut prefixSum := 0
+  let mut prefixSums := []
   for gap in gaps do
-    let (prefixSum, prefixSums) ← get
     if gap ≥ 256 then
-      set (prefixSum + gap , (prefixSum + gap) :: prefixSums)
+      prefixSum := prefixSum + gap
+      prefixSums := prefixSum :: prefixSums
     else
-      set (prefixSum + gap, prefixSums)
-  return (← get).2.reverse
+      prefixSum := prefixSum + gap
+  return prefixSums.reverse
 
 def largeOffsetEncoding (indices prefixSums : List Nat) : Array Nat :=
   let prefixSums := prefixSums ++ [1114111 + 1]
@@ -285,7 +287,7 @@ def calculateTable (ucd : List UnicodeData) (property : UnicodeData → Bool) : 
   let gaps := mergeRanges ranges
   let offsets := offsets gaps
   let indices := indices gaps
-  let (prefixSums, _) := prefixSums gaps |>.run (0,[])
+  let prefixSums := prefixSums gaps
   --dbg_trace s!"Indices: {indices}"
   --dbg_trace s!"Prefix sum: {prefixSums}"
   let runs := largeOffsetEncoding indices prefixSums
