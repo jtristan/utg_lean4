@@ -204,35 +204,36 @@ def printUnicodeData (ucd : List UnicodeData) : IO Unit := do
   for entry in ucd do
     println <| reprStr entry
 
-def explicitRanges (ucd : List UnicodeData) (property : UnicodeData → Bool) : StateM ((Option Range) × List Range) (List Range) := do
+def explicitRanges (ucd : List UnicodeData) (property : UnicodeData → Bool) : List Range := Id.run do
+  let mut rangeOpt : Option Range := none
+  let mut ranges := []
   for datapoint in ucd do
-    let (rangeOpt, ranges) ← get
     let code := datapoint.codepoint
     let prop := property datapoint
     match rangeOpt, prop with
     | some r, true =>
       if r.stop + 1 = code then
         -- Extend the range
-        set (some ({r with stop := code})  , ranges)
+        rangeOpt := some {r with stop := code}
       else
         -- Hidden gap
         let completedRange : Range := { start := r.start , stop := r.stop + 1 }
         let newRange : Range := { start := code , stop := code }
-        set (some newRange , completedRange :: ranges)
+        rangeOpt := some newRange
+        ranges := completedRange :: ranges
     | some r, false =>
       -- Close the range
       -- Cannot use code for range end as their may be a jump in codepoints
       let completedRange : Range := { start := r.start , stop := r.stop + 1 }
-      set ((none : Option Range) , completedRange :: ranges)
+      rangeOpt := none
+      ranges := completedRange :: ranges
     | none, true =>
       -- Open a range
       let newRange : Range := { start := code , stop := code }
-      set (some newRange , ranges)
-    | none, false =>
-      -- Nothing interesting, moving on
-      set (rangeOpt , ranges)
+      rangeOpt := some newRange
+    | none, false => ()
 
-  return (← get).2
+  return ranges
 
 def mergeRanges (ranges : List Range) : List Nat := Id.run do
   let flat := ranges.foldl (fun acc => fun range => range.start :: range.stop :: acc) []
@@ -278,7 +279,7 @@ instance : ToString UcdPropertyTable where
   toString := fun table => s!"runs:\n{table.runs}\noffsets:\n{table.offsets}"
 
 def calculateTable (ucd : List UnicodeData) (property : UnicodeData → Bool) : UcdPropertyTable :=
-  let (ranges,_,_) := (explicitRanges ucd property) |>.run (none,[])
+  let ranges := (explicitRanges ucd property)
   let gaps := mergeRanges ranges
   let offsets := offsets gaps
   let (indices, _) := indices gaps |>.run (0,[0])
@@ -418,10 +419,6 @@ def main : IO Unit := do
       --   println rb
 
   | Except.error msg => println msg
-
--- If my function is going to initialize the state, do I still need to run?
--- Does the state needs to be returned?
--- If I declared variables as let mul, could I infer the state?
 
 #check getRandomBytes
 #check monoMsNow
