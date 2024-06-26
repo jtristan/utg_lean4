@@ -73,35 +73,35 @@ inductive GeneralCategory where
 
 def mkGeneralCategory (s : String) : Except String GeneralCategory := do
   if s = "Lu" then pure <| GeneralCategory.Letter Letter.Lu
-  else if s = "Ll" then pure <| GeneralCategory.Letter Letter.Ll
-  else if s = "Lt" then pure <| GeneralCategory.Letter Letter.Lt
-  else if s = "Lm" then pure <| GeneralCategory.Letter Letter.Lm
-  else if s = "Lo" then pure <| GeneralCategory.Letter Letter.Lo
-  else if s = "Mn" then pure <| GeneralCategory.Mark Mark.Mn
-  else if s = "Mc" then pure <| GeneralCategory.Mark Mark.Mc
-  else if s = "Me" then pure <| GeneralCategory.Mark Mark.Me
-  else if s = "Nd" then pure <| GeneralCategory.Number Number.Nd
-  else if s = "Nl" then pure <| GeneralCategory.Number Number.Nl
-  else if s = "No" then pure <| GeneralCategory.Number Number.No
-  else if s = "Pc" then pure <| GeneralCategory.Punctuation Punctuation.Pc
-  else if s = "Pd" then pure <| GeneralCategory.Punctuation Punctuation.Pd
-  else if s = "Ps" then pure <| GeneralCategory.Punctuation Punctuation.Ps
-  else if s = "Pe" then pure <| GeneralCategory.Punctuation Punctuation.Pe
-  else if s = "Pi" then pure <| GeneralCategory.Punctuation Punctuation.Pi
-  else if s = "Pf" then pure <| GeneralCategory.Punctuation Punctuation.Pf
-  else if s = "Po" then pure <| GeneralCategory.Punctuation Punctuation.Po
-  else if s = "Sm" then pure <| GeneralCategory.Symbol Symbol.Sm
-  else if s = "Sc" then pure <| GeneralCategory.Symbol Symbol.Sc
-  else if s = "Sk" then pure <| GeneralCategory.Symbol Symbol.Sk
-  else if s = "So" then pure <| GeneralCategory.Symbol Symbol.So
-  else if s = "Zs" then pure <| GeneralCategory.Separator Separator.Zs
-  else if s = "Zl" then pure <| GeneralCategory.Separator Separator.Zl
-  else if s = "Zp" then pure <| GeneralCategory.Separator Separator.Zp
-  else if s = "Cc" then pure <| GeneralCategory.Other Other.Cc
-  else if s = "Cf" then pure <| GeneralCategory.Other Other.Cf
-  else if s = "Cs" then pure <| GeneralCategory.Other Other.Cs
-  else if s = "Co" then pure <| GeneralCategory.Other Other.Co
-  else if s = "Cn" then pure <| GeneralCategory.Other Other.Cn
+  else if s = "Ll" then pure <| .Letter .Ll
+  else if s = "Lt" then pure <| .Letter .Lt
+  else if s = "Lm" then pure <| .Letter .Lm
+  else if s = "Lo" then pure <| .Letter .Lo
+  else if s = "Mn" then pure <| .Mark .Mn
+  else if s = "Mc" then pure <| .Mark .Mc
+  else if s = "Me" then pure <| .Mark .Me
+  else if s = "Nd" then pure <| .Number .Nd
+  else if s = "Nl" then pure <| .Number .Nl
+  else if s = "No" then pure <| .Number .No
+  else if s = "Pc" then pure <| .Punctuation .Pc
+  else if s = "Pd" then pure <| .Punctuation .Pd
+  else if s = "Ps" then pure <| .Punctuation .Ps
+  else if s = "Pe" then pure <| .Punctuation .Pe
+  else if s = "Pi" then pure <| .Punctuation .Pi
+  else if s = "Pf" then pure <| .Punctuation .Pf
+  else if s = "Po" then pure <| .Punctuation .Po
+  else if s = "Sm" then pure <| .Symbol .Sm
+  else if s = "Sc" then pure <| .Symbol .Sc
+  else if s = "Sk" then pure <| .Symbol .Sk
+  else if s = "So" then pure <| .Symbol .So
+  else if s = "Zs" then pure <| .Separator .Zs
+  else if s = "Zl" then pure <| .Separator .Zl
+  else if s = "Zp" then pure <| .Separator .Zp
+  else if s = "Cc" then pure <| .Other .Cc
+  else if s = "Cf" then pure <| .Other .Cf
+  else if s = "Cs" then pure <| .Other .Cs
+  else if s = "Co" then pure <| .Other .Co
+  else if s = "Cn" then pure <| .Other .Cn
   else throw s!"Unknown General Category: {s}"
 
 inductive BidiClass where
@@ -154,19 +154,19 @@ def String.toNatHex! (s : String) : Nat :=
   else
     panic! "Nat in hexadecimal expected"
 
-def loadUnicodeData (file : FilePath) : ExceptT String (StateT (List UnicodeData) IO) (List UnicodeData) := do
+def loadUnicodeData (file : FilePath) : ExceptT String IO (List UnicodeData) := do
   let content : String ← readFile file
   let content : List String := content.splitOn "\n"
+  let mut data := []
   for line in content do
     if line ≠ "" then -- UnicodeData.txt ends with an empty line
       let line : List String := line.splitOn ";"
       let codepoint : String := line.get! 0
       let gc : GeneralCategory ← mkGeneralCategory (line.get! 2)
-      let data : List UnicodeData ← get
       match codepoint.toNatHex? with
       | none => throw "Conversion of codepoint failed"
-      | some c => set <| { codepointRaw := codepoint , codepoint := c, gc := gc } :: data
-  return (← get).reverse
+      | some c => data := { codepointRaw := codepoint , codepoint := c, gc := gc } :: data
+  return data.reverse
 
 structure SummaryUCD where
   letterCount : Int := 0
@@ -178,18 +178,18 @@ structure SummaryUCD where
   otherCount : Int := 0
   deriving Repr, DecidableEq, Inhabited, Nonempty
 
-def summarizeUnicodeData (ucd : List UnicodeData) : StateM SummaryUCD SummaryUCD := do
+def summarizeUnicodeData (ucd : List UnicodeData) : SummaryUCD := Id.run do
+  let mut table : SummaryUCD := {}
   for entry in ucd do
-    let table ← get
     match entry.gc with
-    | GeneralCategory.Letter _ => set { table with letterCount := table.letterCount + 1 }
-    | GeneralCategory.Mark _ => set { table with markCount := table.markCount + 1 }
-    | GeneralCategory.Number _ => set { table with numberCount := table.numberCount + 1 }
-    | GeneralCategory.Punctuation _ => set { table with punctuationCount := table.punctuationCount + 1 }
-    | GeneralCategory.Symbol _ => set { table with symbolCount := table.symbolCount + 1 }
-    | GeneralCategory.Separator _ => set { table with separatorCount := table.separatorCount + 1 }
-    | GeneralCategory.Other _ => set { table with otherCount := table.otherCount + 1 }
-  return ← get
+    | GeneralCategory.Letter _ => table := { table with letterCount := table.letterCount + 1 }
+    | GeneralCategory.Mark _ => table := { table with markCount := table.markCount + 1 }
+    | GeneralCategory.Number _ => table := { table with numberCount := table.numberCount + 1 }
+    | GeneralCategory.Punctuation _ => table := { table with punctuationCount := table.punctuationCount + 1 }
+    | GeneralCategory.Symbol _ => table := { table with symbolCount := table.symbolCount + 1 }
+    | GeneralCategory.Separator _ => table := { table with separatorCount := table.separatorCount + 1 }
+    | GeneralCategory.Other _ => table := { table with otherCount := table.otherCount + 1 }
+  return table
 
 def printSummary (sucd : SummaryUCD) : IO Unit := do
   println s!"Letter count: {sucd.letterCount}"
@@ -267,7 +267,7 @@ def prefixSums (gaps : List Nat) : StateM (Nat × List Nat) (List Nat) := do
       set (prefixSum + gap, prefixSums)
   return (← get).2.reverse
 
-def largeOffsetEncoding (indices prefixSums : List Nat) :=
+def largeOffsetEncoding (indices prefixSums : List Nat) : Array Nat :=
   let prefixSums := prefixSums ++ [1114111 + 1]
   ((indices.zip prefixSums).map (fun (idx,pf) => idx + pf)).toArray
 
@@ -330,11 +330,50 @@ def search (table : UcdPropertyTable) (c : Char) : Bool :=
   --dbg_trace s!"Parity: {b}"
   b
 
-def referenceTable (ucd : List UnicodeData) (property : UnicodeData → Bool): List Nat :=
+@[simp]
+noncomputable def skiplist (ucd : List UnicodeData) (property : UnicodeData → Bool) (c : Char) :=
+  let table := calculateTable ucd property
+  search table c
+
+def referenceTable (ucd : List UnicodeData) (property : UnicodeData → Bool) : List Nat :=
   (ucd.filter property).map (fun ucdc => ucdc.codepoint)
 
 def referenceSearch (table : List Nat) (c : Char) : Bool :=
   table.contains c.toNat
+
+@[simp]
+noncomputable def reference (ucd : List UnicodeData) (property : UnicodeData → Bool) (c : Char) : Bool :=
+  let table := referenceTable ucd property
+  referenceSearch table c
+
+def compareTables (ucd : List UnicodeData) (property : UnicodeData → Bool) : Bool := Id.run do
+  let table := calculateTable ucd property
+  let referenceTable := referenceTable ucd property
+  for i in Range.mk 0 1114112 1 do
+    let c := Char.ofNat i
+    let ref := referenceSearch referenceTable c
+    let candidate := search table c
+    if ref ≠ candidate then
+      return false
+  return true
+
+-- theorem foo (ucd : List UnicodeData) (property : UnicodeData → Bool) (h : compareTables ucd property = true) (c : Char)
+--     : skiplist ucd property c = reference ucd property c := by
+--   simp
+--   simp [compareTables] at h
+--   have A : ∀ c : Char, c.toNat < 1114112 := by
+--     intro c
+--     have B := c.valid
+--     simp [UInt32.isValidChar, Nat.isValidChar] at B
+--     simp [Char.toNat]
+--     rcases B with ⟨ h2 ⟩
+--     . rename_i h2
+
+--     . rename_i h2
+--       rcases h2 with ⟨ h2, h4 ⟩
+--       trivial
+
+
 
 def main : IO Unit := do
   let workingDir : FilePath ← currentDir
@@ -346,17 +385,15 @@ def main : IO Unit := do
     let _ ← download (unicodeUrl ++ dataset) f
 
   let f : FilePath := System.mkFilePath ["Data","UnicodeData.txt"]
-  let ucd₁ : ExceptT String (StateT (List UnicodeData) IO) (List UnicodeData) := loadUnicodeData f
-  let ucd₂ : IO (Except String (List UnicodeData) × List UnicodeData) := ucd₁ |>.run []
-  let ucd₃ : (Except String (List UnicodeData)) × List UnicodeData ← ucd₂
-  let ucd₄ : Except String (List UnicodeData) := ucd₃.1
+  let ucd₁ : ExceptT String IO (List UnicodeData) := loadUnicodeData f
+  let ucd₄ : Except String (List UnicodeData) ← ucd₁
   match ucd₄ with
   | Except.ok ucd₅ =>
       -- printUnicodeData ucd₅
       println s! "UCD size: {ucd₅.length}"
-      let summary := summarizeUnicodeData ucd₅ |>.run {}
-      printSummary summary.1
-      let property := (fun ucdc : UnicodeData => if let GeneralCategory.Number _ := ucdc.gc then true else false)
+      let summary := summarizeUnicodeData ucd₅
+      printSummary summary
+      let property := (fun ucdc : UnicodeData => if let .Number _ := ucdc.gc then true else false)
       let table := calculateTable ucd₅ property
       let referenceTable := referenceTable ucd₅ property
       println table
