@@ -248,14 +248,16 @@ def mergeRanges (ranges : List Range) : List Nat := Id.run do
 def offsets (gaps : List Nat) : Array UInt8 :=
   (gaps.map (fun gap => if gap ≥ 256 then 0 else gap.toUInt8)).toArray
 
-def indices (gaps : List Nat) : StateM (Nat × List Nat) (List Nat) := do
+def indices (gaps : List Nat) : List Nat := Id.run do
+  let mut index := 0
+  let mut indices := [0]
   for gap in gaps do
-    let (index, indices) ← get
     if gap ≥ 256 then
-      set (index + 1 , ((index + 1) * 2^21) :: indices)
+      index := index + 1
+      indices := index * 2^21 :: indices
     else
-      set (index + 1, indices)
-  return (← get).2.reverse
+      index := index + 1
+  return indices.reverse
 
 def prefixSums (gaps : List Nat) : StateM (Nat × List Nat) (List Nat) := do
   for gap in gaps do
@@ -282,7 +284,7 @@ def calculateTable (ucd : List UnicodeData) (property : UnicodeData → Bool) : 
   let ranges := (explicitRanges ucd property)
   let gaps := mergeRanges ranges
   let offsets := offsets gaps
-  let (indices, _) := indices gaps |>.run (0,[0])
+  let indices := indices gaps
   let (prefixSums, _) := prefixSums gaps |>.run (0,[])
   --dbg_trace s!"Indices: {indices}"
   --dbg_trace s!"Prefix sum: {prefixSums}"
