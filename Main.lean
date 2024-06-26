@@ -305,16 +305,16 @@ def searchRuns (table : UcdPropertyTable) (c : Char) : Nat × Range := Id.run do
   let range : Range := Range.mk rangeStart rangeStop 1
   return (codepointStart, range)
 
-def searchOffsets (table : UcdPropertyTable) (c : Char) (range : Range) : StateM (Nat × Nat) Bool := do
+def searchOffsets (table : UcdPropertyTable) (c : Char) (range : Range) (pfs : Nat) : Bool := Id.run do
   let codepoint := c.toNat
-  for i in range do
-    let (_, prefixSum) ← get
-    if codepoint < prefixSum + (table.offsets.get! i).toNat then
-      set <| (i,prefixSum)
+  let mut i := 0
+  let mut prefixSum := pfs
+  for j in range do
+    if codepoint < prefixSum + (table.offsets.get! j).toNat then
+      i := j
       break
     else
-      set <| (0,prefixSum + (table.offsets.get! i).toNat)
-  let (i,_) ← get
+      prefixSum := prefixSum + (table.offsets.get! j).toNat
   return i % 2 = 1
 
 instance : ToString Range where
@@ -323,7 +323,7 @@ instance : ToString Range where
 def search (table : UcdPropertyTable) (c : Char) : Bool :=
   let (pfs,range) := searchRuns table c
   --dbg_trace s!"{pfs} {range}"
-  let (b, _) := searchOffsets table c range |>.run (0,pfs)
+  let b := searchOffsets table c range pfs
   --dbg_trace s!"Parity: {b}"
   b
 
