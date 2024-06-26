@@ -252,22 +252,18 @@ def indices (gaps : List Nat) : List Nat := Id.run do
   let mut index := 0
   let mut indices := [0]
   for gap in gaps do
+    index := index + 1
     if gap ≥ 256 then
-      index := index + 1
       indices := index * 2^21 :: indices
-    else
-      index := index + 1
   return indices.reverse
 
 def prefixSums (gaps : List Nat) : List Nat := Id.run do
   let mut prefixSum := 0
   let mut prefixSums := []
   for gap in gaps do
+    prefixSum := prefixSum + gap
     if gap ≥ 256 then
-      prefixSum := prefixSum + gap
       prefixSums := prefixSum :: prefixSums
-    else
-      prefixSum := prefixSum + gap
   return prefixSums.reverse
 
 def largeOffsetEncoding (indices prefixSums : List Nat) : Array Nat :=
