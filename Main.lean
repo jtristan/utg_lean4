@@ -398,24 +398,24 @@ def main : IO Unit := do
       let referenceTable := referenceTable ucd₅ property
       println table
       let bound := 1200000
+      for i in Range.mk 0 bound 1 do
+        let c := Char.ofNat i
+        let ref := referenceSearch referenceTable c
+        let candidate := search table c
+        if ref ≠ candidate then
+          println s!"{c.toNat} {c} {ref} {candidate}"
+      println s!"Size: {referenceTable.length * 4}"
+      -- let time ← monoNanosNow
       -- for i in Range.mk 0 bound 1 do
       --   let c := Char.ofNat i
-      --   let ref := referenceSearch referenceTable c
-      --   let candidate := search table c
-      --   if ref ≠ candidate then
-      --     println s!"{c.toNat} {c} {ref} {candidate}"
-      println s!"Size: {referenceTable.length * 4}"
-      let time ← monoNanosNow
-      for i in Range.mk 0 bound 1 do
-        let c := Char.ofNat i
-        let _ := referenceSearch referenceTable c
-      println <| (← monoNanosNow) - time
-      println s!"Size: {table.offsets.size + table.runs.size * 4}"
-      let time ← monoNanosNow
-      for i in Range.mk 0 bound 1 do
-        let c := Char.ofNat i
-        let _ := search table c
-      println <| (← monoNanosNow) - time
+      --   let _ := referenceSearch referenceTable c
+      -- println <| (← monoNanosNow) - time
+      -- println s!"Size: {table.offsets.size + table.runs.size * 4}"
+      -- let time ← monoNanosNow
+      -- for i in Range.mk 0 bound 1 do
+      --   let c := Char.ofNat i
+      --   let _ := search table c
+      -- println <| (← monoNanosNow) - time
       -- for i in Range.mk 0 100 1 do
       --   let rb ← getRandomBytes 1
       --   println rb
