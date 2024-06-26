@@ -288,17 +288,16 @@ def calculateTable (ucd : List UnicodeData) (property : UnicodeData → Bool) : 
   let runs := largeOffsetEncoding indices prefixSums
   { runs, offsets }
 
-def searchRuns (table : UcdPropertyTable) (c : Char) : StateM Nat (Nat × Range) := do
+def searchRuns (table : UcdPropertyTable) (c : Char) : Nat × Range := Id.run do
   let codepoint := c.toNat
-  -- dbg_trace s!"Codepoint: {codepoint}"
+  let mut i := 0
   for run in table.runs do
-    let i ← get
     let prefixSum := run % 2^21
     --dbg_trace s!"Iteration: {i} {prefixSum}"
     if codepoint < prefixSum then -- careful > or ≥
       break
-    set <| i + 1
-  let idx ← get
+    i := i + 1
+  let idx := i
   --dbg_trace s!"Idx: {idx} {codepoint} {table.runs.get! idx % 2^21}"
   let codepointStart := if idx = 0 then 0 else table.runs.get! (idx - 1) % 2^21
   let rangeStart := table.runs.get! idx / 2^21
@@ -322,7 +321,7 @@ instance : ToString Range where
   toString := fun range : Range => s!"[{range.start}..{range.stop})"
 
 def search (table : UcdPropertyTable) (c : Char) : Bool :=
-  let ((pfs,range),_) := searchRuns table c |>.run 0
+  let (pfs,range) := searchRuns table c
   --dbg_trace s!"{pfs} {range}"
   let (b, _) := searchOffsets table c range |>.run (0,pfs)
   --dbg_trace s!"Parity: {b}"
