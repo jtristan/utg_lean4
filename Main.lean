@@ -1,4 +1,6 @@
 import «UtgLean4»
+import UtgLean4.Lookup
+import UtgLean4.Util
 
 open System IO FilePath Process FS Std
 
@@ -71,6 +73,37 @@ inductive GeneralCategory where
   | Other (minor : Other)
   deriving Repr, DecidableEq, Inhabited, Nonempty
 
+inductive BidiClass where
+  | AL  -- Arabic Letter
+  | AN  -- Arabic Number
+  | B   -- Paragraph Separator
+  | BN  -- Boundary Neutral
+  | CS  -- Common Separator
+  | EN  -- European Number
+  | ES  -- European Separator
+  | ET  -- European Terminator
+  | FSI -- First Strong Isolate
+  | L   -- Left To Right
+  | LRE -- Left To Right Embedding
+  | LRI -- Left To Right Isolate
+  | LRO -- Left To Right Override
+  | NSM -- Nonspacing Mark
+  | ON  -- Other Neutral
+  | PDF -- Pop Directional Format
+  | PDI -- Pop Directional Isolate
+  | R   -- Right To Left
+  | RLE -- Right To Left Embedding
+  | RLI -- Right To Left Isolate
+  | RLO -- Right To Left Override
+  | S   -- Segment Separator
+  | WS  -- White Space
+
+structure UnicodeData where
+  codepointRaw : String
+  codepoint : Nat
+  gc : GeneralCategory
+  deriving Repr, DecidableEq, Inhabited, Nonempty
+
 def mkGeneralCategory (s : String) : Except String GeneralCategory := do
   if s = "Lu" then pure <| GeneralCategory.Letter Letter.Lu
   else if s = "Ll" then pure <| .Letter .Ll
@@ -104,55 +137,6 @@ def mkGeneralCategory (s : String) : Except String GeneralCategory := do
   else if s = "Cn" then pure <| .Other .Cn
   else throw s!"Unknown General Category: {s}"
 
-inductive BidiClass where
-  | AL  -- Arabic Letter
-  | AN  -- Arabic Number
-  | B   -- Paragraph Separator
-  | BN  -- Boundary Neutral
-  | CS  -- Common Separator
-  | EN  -- European Number
-  | ES  -- European Separator
-  | ET  -- European Terminator
-  | FSI -- First Strong Isolate
-  | L   -- Left To Right
-  | LRE -- Left To Right Embedding
-  | LRI -- Left To Right Isolate
-  | LRO -- Left To Right Override
-  | NSM -- Nonspacing Mark
-  | ON  -- Other Neutral
-  | PDF -- Pop Directional Format
-  | PDI -- Pop Directional Isolate
-  | R   -- Right To Left
-  | RLE -- Right To Left Embedding
-  | RLI -- Right To Left Isolate
-  | RLO -- Right To Left Override
-  | S   -- Segment Separator
-  | WS  -- White Space
-
-structure UnicodeData where
-  codepointRaw : String
-  codepoint : Nat
-  gc : GeneralCategory
-  deriving Repr, DecidableEq, Inhabited, Nonempty
-
-/-- Is the character in `0123456789ABCDEF`? -/
-def Char.isHexDigit (c : Char) : Bool :=
-  c.val ≥ 48 && c.val ≤ 57 || c.val ≥ 65 && c.val ≤ 70
-
-def String.isNatHex (s : String) : Bool :=
-  !s.isEmpty && s.all (·.isHexDigit)
-
-def String.toNatHex? (s : String) : Option Nat :=
-  if s.isNatHex then
-    some <| s.foldl (fun n c =>  n*16 + (if c.isDigit then c.toNat - '0'.toNat else 10 + (c.toNat - 'A'.toNat))) 0
-  else
-    none
-
-def String.toNatHex! (s : String) : Nat :=
-  if s.isNatHex then
-    s.foldl (fun n c =>  n*16 + (if c.isDigit then c.toNat - '0'.toNat else 10 + (c.toNat - 'A'.toNat))) 0
-  else
-    panic! "Nat in hexadecimal expected"
 
 def loadUnicodeData (file : FilePath) : ExceptT String IO (List UnicodeData) := do
   let content : String ← readFile file
@@ -270,14 +254,6 @@ def largeOffsetEncoding (indices prefixSums : List Nat) : Array UInt32 :=
   let prefixSums := prefixSums ++ [1114111 + 1]
   ((indices.zip prefixSums).map (fun (idx,pf) => (idx + pf).toUInt32)).toArray
 
-structure UcdPropertyTable where
-  runs : Array UInt32
-  offsets : Array UInt8
-  deriving Repr, DecidableEq, Inhabited, Nonempty
-
-instance : ToString UcdPropertyTable where
-  toString := fun table => s!"runs:\n{table.runs}\noffsets:\n{table.offsets}"
-
 def calculateTable (ucd : List UnicodeData) (property : UnicodeData → Bool) : UcdPropertyTable :=
   let ranges := (explicitRanges ucd property)
   let gaps := mergeRanges ranges
@@ -288,45 +264,6 @@ def calculateTable (ucd : List UnicodeData) (property : UnicodeData → Bool) : 
   --dbg_trace s!"Prefix sum: {prefixSums}"
   let runs := largeOffsetEncoding indices prefixSums
   { runs, offsets }
-
-def searchRuns (table : UcdPropertyTable) (c : Char) : Nat × Range := Id.run do
-  let codepoint := c.toNat
-  let mut i := 0
-  for run in table.runs do
-    let prefixSum := run.toNat % 2^21
-    --dbg_trace s!"Iteration: {i} {prefixSum}"
-    if codepoint < prefixSum then -- careful > or ≥
-      break
-    i := i + 1
-  let idx := i
-  --dbg_trace s!"Idx: {idx} {codepoint} {table.runs.get! idx % 2^21}"
-  let codepointStart := if idx = 0 then 0 else (table.runs.get! (idx - 1)).toNat % 2^21
-  let rangeStart := (table.runs.get! idx).toNat / 2^21
-  let rangeStop := if idx + 1 = table.runs.size then table.offsets.size else (table.runs.get! (idx + 1)).toNat / 2^21
-  let range : Range := Range.mk rangeStart rangeStop 1
-  return (codepointStart, range)
-
-def searchOffsets (table : UcdPropertyTable) (c : Char) (range : Range) (pfs : Nat) : Bool := Id.run do
-  let codepoint := c.toNat
-  let mut i := 0
-  let mut prefixSum := pfs
-  for j in range do
-    if codepoint < prefixSum + (table.offsets.get! j).toNat then
-      i := j
-      break
-    else
-      prefixSum := prefixSum + (table.offsets.get! j).toNat
-  return i % 2 = 1
-
-instance : ToString Range where
-  toString := fun range : Range => s!"[{range.start}..{range.stop})"
-
-def search (table : UcdPropertyTable) (c : Char) : Bool :=
-  let (pfs,range) := searchRuns table c
-  --dbg_trace s!"{pfs} {range}"
-  let b := searchOffsets table c range pfs
-  --dbg_trace s!"Parity: {b}"
-  b
 
 @[simp]
 noncomputable def skiplist (ucd : List UnicodeData) (property : UnicodeData → Bool) (c : Char) :=
@@ -344,7 +281,9 @@ noncomputable def reference (ucd : List UnicodeData) (property : UnicodeData →
   let table := referenceTable ucd property
   referenceSearch table c
 
-def compareTables (ucd : List UnicodeData) (property : UnicodeData → Bool) : Bool := Id.run do
+def compareTables (ucd : List UnicodeData) (property : UnicodeData → Bool) : IO Unit := do
+  let time ← monoMsNow
+  let mut failed := false
   let table := calculateTable ucd property
   let referenceTable := referenceTable ucd property
   for i in Range.mk 0 1114112 1 do
@@ -352,26 +291,21 @@ def compareTables (ucd : List UnicodeData) (property : UnicodeData → Bool) : B
     let ref := referenceSearch referenceTable c
     let candidate := search table c
     if ref ≠ candidate then
-      return false
-  return true
+      failed := true
+      println s!"{c.toNat} {c} {ref} {candidate}"
+  let msg := if failed then "failed" else "succeeded"
+  println s!"Verification {msg} in {((← monoMsNow) - time).toFloat / 1000} seconds"
 
--- theorem foo (ucd : List UnicodeData) (property : UnicodeData → Bool) (h : compareTables ucd property = true) (c : Char)
---     : skiplist ucd property c = reference ucd property c := by
---   simp
---   simp [compareTables] at h
---   have A : ∀ c : Char, c.toNat < 1114112 := by
---     intro c
---     have B := c.valid
---     simp [UInt32.isValidChar, Nat.isValidChar] at B
---     simp [Char.toNat]
---     rcases B with ⟨ h2 ⟩
---     . rename_i h2
-
---     . rename_i h2
---       rcases h2 with ⟨ h2, h4 ⟩
---       trivial
-
-
+def writeTable : IO Unit := do
+  let workingDir : FilePath ← currentDir
+  let f : FilePath := join workingDir <| System.mkFilePath ["UtgLean4","Tables.lean"]
+  let mut content := ""
+  content := content ++ "import UtgLean4.Lookup\n"
+  content := content ++ "\n"
+  content := content ++ "instance numericTable : UcdPropertyTable where\n"
+  content := content ++ "  runs := #[0]\n"
+  content := content ++ "  offsets := #[0]\n"
+  writeFile f content
 
 def main : IO Unit := do
   let workingDir : FilePath ← currentDir
@@ -387,38 +321,12 @@ def main : IO Unit := do
   let ucd₄ : Except String (List UnicodeData) ← ucd₁
   match ucd₄ with
   | Except.ok ucd₅ =>
-      -- printUnicodeData ucd₅
       println s! "UCD size: {ucd₅.length}"
       let summary := summarizeUnicodeData ucd₅
       printSummary summary
       let property := (fun ucdc : UnicodeData => if let .Number _ := ucdc.gc then true else false)
-      let table := calculateTable ucd₅ property
-      let referenceTable := referenceTable ucd₅ property
-      println table
-      let bound := 1200000
-      for i in Range.mk 0 bound 1 do
-        let c := Char.ofNat i
-        let ref := referenceSearch referenceTable c
-        let candidate := search table c
-        if ref ≠ candidate then
-          println s!"{c.toNat} {c} {ref} {candidate}"
-      println s!"Size: {referenceTable.length * 4}"
-      -- let time ← monoNanosNow
-      -- for i in Range.mk 0 bound 1 do
-      --   let c := Char.ofNat i
-      --   let _ := referenceSearch referenceTable c
-      -- println <| (← monoNanosNow) - time
-      -- println s!"Size: {table.offsets.size + table.runs.size * 4}"
-      -- let time ← monoNanosNow
-      -- for i in Range.mk 0 bound 1 do
-      --   let c := Char.ofNat i
-      --   let _ := search table c
-      -- println <| (← monoNanosNow) - time
-      -- for i in Range.mk 0 100 1 do
-      --   let rb ← getRandomBytes 1
-      --   println rb
-
+      compareTables ucd₅ property
+      writeTable
   | Except.error msg => println msg
 
 #check getRandomBytes
-#check monoMsNow
