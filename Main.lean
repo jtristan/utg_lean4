@@ -266,12 +266,12 @@ def prefixSums (gaps : List Nat) : List Nat := Id.run do
       prefixSums := prefixSum :: prefixSums
   return prefixSums.reverse
 
-def largeOffsetEncoding (indices prefixSums : List Nat) : Array Nat :=
+def largeOffsetEncoding (indices prefixSums : List Nat) : Array UInt32 :=
   let prefixSums := prefixSums ++ [1114111 + 1]
-  ((indices.zip prefixSums).map (fun (idx,pf) => idx + pf)).toArray
+  ((indices.zip prefixSums).map (fun (idx,pf) => (idx + pf).toUInt32)).toArray
 
 structure UcdPropertyTable where
-  runs : Array Nat
+  runs : Array UInt32
   offsets : Array UInt8
   deriving Repr, DecidableEq, Inhabited, Nonempty
 
@@ -293,16 +293,16 @@ def searchRuns (table : UcdPropertyTable) (c : Char) : Nat × Range := Id.run do
   let codepoint := c.toNat
   let mut i := 0
   for run in table.runs do
-    let prefixSum := run % 2^21
+    let prefixSum := run.toNat % 2^21
     --dbg_trace s!"Iteration: {i} {prefixSum}"
     if codepoint < prefixSum then -- careful > or ≥
       break
     i := i + 1
   let idx := i
   --dbg_trace s!"Idx: {idx} {codepoint} {table.runs.get! idx % 2^21}"
-  let codepointStart := if idx = 0 then 0 else table.runs.get! (idx - 1) % 2^21
-  let rangeStart := table.runs.get! idx / 2^21
-  let rangeStop := if idx + 1 = table.runs.size then table.offsets.size else table.runs.get! (idx + 1) / 2^21
+  let codepointStart := if idx = 0 then 0 else (table.runs.get! (idx - 1)).toNat % 2^21
+  let rangeStart := (table.runs.get! idx).toNat / 2^21
+  let rangeStop := if idx + 1 = table.runs.size then table.offsets.size else (table.runs.get! (idx + 1)).toNat / 2^21
   let range : Range := Range.mk rangeStart rangeStop 1
   return (codepointStart, range)
 
