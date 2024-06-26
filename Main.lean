@@ -234,17 +234,15 @@ def explicitRanges (ucd : List UnicodeData) (property : UnicodeData → Bool) : 
 
   return (← get).2
 
-def mergeRanges (ranges : List Range) : StateM (Nat × List Nat) (List Nat) := do
+def mergeRanges (ranges : List Range) : List Nat := Id.run do
   let flat := ranges.foldl (fun acc => fun range => range.start :: range.stop :: acc) []
+  let mut prev := 0
+  let mut gaps := []
   for bound in flat do
-    let (prev, gaps) ← get
-    set (bound, (bound - prev) :: gaps)
-  let (_,gaps) ← get
-  let gaps := (0 :: gaps).reverse
+    gaps := (bound - prev) :: gaps
+    prev := bound
+  gaps := (0 :: gaps).reverse
   return gaps
-  -- let offsets := gaps.map (fun gap => if gap ≥ 256 then 0 else gap)
-  -- let offsetIndices := gaps.foldl (fun acc => fun gap => if gap ≥ 256 then gap :: acc else acc) []
-  -- return (offsets, offsetIndices)
 
 def offsets (gaps : List Nat) : Array UInt8 :=
   (gaps.map (fun gap => if gap ≥ 256 then 0 else gap.toUInt8)).toArray
@@ -281,7 +279,7 @@ instance : ToString UcdPropertyTable where
 
 def calculateTable (ucd : List UnicodeData) (property : UnicodeData → Bool) : UcdPropertyTable :=
   let (ranges,_,_) := (explicitRanges ucd property) |>.run (none,[])
-  let (gaps,_) := mergeRanges ranges |>.run (0,[])
+  let gaps := mergeRanges ranges
   let offsets := offsets gaps
   let (indices, _) := indices gaps |>.run (0,[0])
   let (prefixSums, _) := prefixSums gaps |>.run (0,[])
