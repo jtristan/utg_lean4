@@ -113,8 +113,6 @@ def calculateTable (ucd : List UnicodeData) (property : UnicodeData → Bool) : 
   let offsets := offsets gaps
   let indices := indices gaps
   let prefixSums := prefixSums gaps
-  --dbg_trace s!"Indices: {indices}"
-  --dbg_trace s!"Prefix sum: {prefixSums}"
   let runs := largeOffsetEncoding indices prefixSums
   { runs, offsets }
 
